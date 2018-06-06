@@ -4,6 +4,7 @@
     player the pieces belongs.
 """
 import enum
+import unittest
 from collections import defaultdict, namedtuple
 
 Piece = namedtuple('Piece', ['letter', 'is_blank'])
@@ -49,16 +50,17 @@ class ScrabbleBoard(object):
     def from_pieces(cls, pieces):
         return cls(pieces)
 
-    def bounds_check(self, loc):
+    def _safe_piece(self, loc, letter, is_blank):
+        piece = Piece(letter, is_blank)
         assert loc[0] >= 0 and loc[0] <= 14 and loc[1] >= 0 and loc[1] <= 14, \
             'Location out of bounds'
+        assert ((loc not in self._pieces) or (piece == self._pieces[loc])), \
+            'Conflict with already placed piece'
+        return piece
 
     def place_piece(self, location, letter, is_blank=False):
-        # Maybe this should be turned of if trying to play the same piece
-        assert location not in self._pieces, 'Playing over another piece'
-        self.bounds_check(location)
         new_peices = self._pieces.copy()
-        new_peices[location] = Piece(letter, is_blank)
+        new_peices[location] = self._safe_piece(location, letter, is_blank)
         return self.from_pieces(new_peices)
 
     # TODO: Needs bounds checking
@@ -66,14 +68,8 @@ class ScrabbleBoard(object):
         new_peices = self._pieces.copy()
         for offset, letter in enumerate(word):
             loc = (start_location[0], start_location[1] - offset) if vertical \
-                else (start_location[0] + offset, start_location[1]) 
-            self.bounds_check(loc)
-            piece = Piece(letter, offset in blanks)
-            if loc in new_peices:
-                assert piece == new_peices[loc], 'Word conflicts with ' \
-                    'already placed piece'
-            else:
-                new_peices[loc] = piece
+                else (start_location[0] + offset, start_location[1])
+            new_peices[loc] = self._safe_piece(loc, letter, offset in blanks)
         return self.from_pieces(new_peices)
 
 
@@ -87,5 +83,13 @@ class ScrabbleBoard(object):
 
     def __repr__(self):
         return '\n'.join(
-            ('|'.join(self._spot_repr((i, j)) for i in range(15))) 
+            ('|'.join(self._spot_repr((i, j)) for i in range(15)))
             for j in reversed(range(15)))
+
+
+class TestScrabbleBoard(unittest.TestCase):
+    def setUp(self):
+        self.sb = ScrabbleBoard()
+
+if __name__ == '__main__':
+    unittest.main()
