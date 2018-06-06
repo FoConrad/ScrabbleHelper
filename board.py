@@ -5,8 +5,10 @@
 """
 import enum
 import unittest
+import itertools
 from collections import defaultdict, namedtuple
 
+BOARD_SIDE = 15
 Piece = namedtuple('Piece', ['letter', 'is_blank'])
 
 class SpotType(enum.Enum):
@@ -90,6 +92,97 @@ class ScrabbleBoard(object):
 class TestScrabbleBoard(unittest.TestCase):
     def setUp(self):
         self.sb = ScrabbleBoard()
+
+    def test_bounds(self):
+        sb = self.sb
+        def bounds(loc, expect_good):
+            try:
+                sb.place_piece(loc, 'a')
+                self.assertTrue(expect_good)
+            except AssertionError:
+                self.assertTrue(not expect_good)
+
+        for loc in itertools.product(range(-5, 20), repeat=2):
+            bounds(loc, (loc[0] in range(15)) and (loc[1] in range(15)))
+
+    def test_play_words(self):
+        sb = self.sb
+        sb = (sb.place_word('hello', (7, 7))
+              .place_word('orange', (11, 7), vertical=True)
+              # Mark 'd' as blank
+              .place_word('edge', (11, 2), blanks=(1,)))
+        self.assertEqual(len(sb._pieces), (len('hello') + len('orange')
+                                           + len('edge') - 2))
+        # Try overwrite the 'd' in edge with another blank 'd', then a
+        # non-blank one
+        sb = sb.place_piece((12, 2), 'd', is_blank=True)
+        try:
+            sb = sb.place_piece((12, 2), 'd', is_blank=False)
+            self.assertTrue(False)
+        except AssertionError:
+            self.assertTrue(True)
+        # Run one off the bottom of board
+        try:
+            sb = sb.place_word('eels', (14, 2), vertical=True)
+            self.assertTrue(False)
+        except AssertionError:
+            self.assertTrue(True)
+        # Hit the bottom right corner going down
+        sb = sb.place_word('eel', (14, 2), vertical=True)
+        sb = sb.place_word('feel', (14, 3), vertical=True)
+        try:
+            # This should change 'f' at (14, 3) to a p
+            sb = sb.place_word('peel', (14, 3), vertical=True)
+            self.assertTrue(False)
+        except AssertionError:
+            self.assertTrue(True)
+        self.sb = sb # For test_repr
+
+    def test_play_piece(self):
+        sb_o = sb = self.sb
+        location_letter_iter = zip(
+            itertools.product(range(BOARD_SIDE), repeat=2),
+            itertools.cycle(map(lambda l: chr(ord('a') + l), range(25))))
+        # Add piece to every spot on board (letter a-y)
+        for loc, letter in location_letter_iter:
+            sb = sb.place_piece(loc, letter)
+        # There should be 15 * 15 pieces on board now
+        self.assertEqual(len(sb._pieces), BOARD_SIDE ** 2)
+        # Try to add another piece which is not the same as the one played
+        try:
+            sb = sb.place_piece((7, 7), 'z')
+            self.assertTrue(False)
+        except AssertionError:
+            self.assertTrue(True)
+        # Add an 'a' again to (0, 0)
+        sb.place_piece((0, 0), 'a')
+        # Go over sb with same iterator and check that the letters are really
+        # there, and that sb_o has nothing there
+        for loc, letter in location_letter_iter:
+            orig_spot, orig_piece = sb_o[location]
+            full_spot, full_piece = sb[location]
+            self.assertEqual(orig_spot, full_spot)
+            self.assertEqual(orig_piece, None)
+            self.assertEqual(full_piece, Piece(letter=letter, is_blank=False))
+
+    def test_repr(self):
+        self.test_play_words()
+        repr_ = repr(self.sb)
+        repr_split = repr_.split('\n')
+        # 15 lines is the hight of a scrabble board
+        self.assertEqual(len(repr_split), 15)
+        # Each tile horizontally is represented by 4 characters, and separated
+        # by 1
+        self.assertTrue(all(len(line) == 4 * 15 + 14 for line in repr_split))
+
+    @classmethod
+    def tearDownClass(cls):
+        # Hack to get a board to show up AFTER all the tests
+        t = cls()
+        t.setUp()
+        t.test_play_words()
+        print(' Example board:')
+        print(t.sb)
 
 if __name__ == '__main__':
     unittest.main()
