@@ -1,12 +1,15 @@
 import operator
+import random
 import itertools
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from functools import partial
 
-LETTER_MAP = {"a": 1, "c": 3, "b": 3, "e": 1, "d": 2, "g": 2, 
-               "f": 4, "i": 1, "h": 4, "k": 5, "j": 8, "m": 3, 
-               "l": 1, "o": 1, "n": 1, "q": 10, "p": 3, "s": 1, 
-               "r": 1, "u": 1, "t": 1, "w": 4, "v": 4, "y": 4, 
+from board import ScrabbleBoard, SpotType
+
+LETTER_MAP = {"a": 1, "c": 3, "b": 3, "e": 1, "d": 2, "g": 2,
+               "f": 4, "i": 1, "h": 4, "k": 5, "j": 8, "m": 3,
+               "l": 1, "o": 1, "n": 1, "q": 10, "p": 3, "s": 1,
+               "r": 1, "u": 1, "t": 1, "w": 4, "v": 4, "y": 4,
                "x": 8, "z": 10}
 
 def raw_word_score(word):
@@ -14,12 +17,12 @@ def raw_word_score(word):
 
 def make_dict(dict_file='scrabble.dict'):
     with open(dict_file, 'r') as fp:
-        return defaultdict(int, {word: raw_word_score(word) 
-                                 for word in map(lambda w: 
+        return defaultdict(int, {word: raw_word_score(word)
+                                 for word in map(lambda w:
                                                  w.strip().lower(), fp)})
 
 def raw_hand_perms(hand):
-    return set(''.join(p) for i in range(len(hand)) 
+    return set(''.join(p) for i in range(1, len(hand) + 1)
                for p in itertools.permutations(hand, i))
 
 def raw_hand_scores(hand, word_dict, top_k=10):
@@ -27,11 +30,136 @@ def raw_hand_scores(hand, word_dict, top_k=10):
     sorted_scores = sorted(all_words.items(), key=operator.itemgetter(1))
     return sorted_scores[-top_k:]
 
+class NotAWordException(Exception):
+    pass
+
 class ScrabbleHelper(object):
-    def __init__(self, scrabble_dict='scrabble.dict'):
+    Play = namedtuple('Play', ('location', 'vertical', 'letters'))
+
+    def __init__(self, scrabble_dict='scrabble.dict', board=None):
         self._raw_dict = make_dict(scrabble_dict)
+        self._board = board or ScrabbleBoard()
 
     def print_raw_hand_scores(self, hand, top_k=5):
         for word, score in reversed(
                 raw_hand_scores(hand, self._raw_dict, top_k)):
             print('{}: {}'.format(word, score))
+
+    def _get_start(self, loc, vertical):
+        next_ = lambda l: (l[0], l[1] - 1) if vertical else (l[0] + 1, l[1])
+        prev = lambda l: (l[0], l[1] + 1) if vertical else (l[0] - 1, l[1])
+        in_bounds = lambda l: all(comp >= 0 for comp in l)
+        prefix = lambda l: (in_bounds(prev(l))
+                            and self._board[prev(l)][1] is not None)
+        while prefix(loc):
+            loc = prev(loc)
+        return loc, next_
+
+    def _score_major(self, play):
+        mult = 1
+        score = 0
+        word = ''
+        touched = False
+
+        letter_locs = []
+        start, next_loc = self._get_start(play.location, play.vertical)
+        for letter in play.letters:
+            while self._board[start][1] is not None:
+                touched = True
+                score += 0 if self._board[start][1].is_blank else \
+                    LETTER_MAP[self._board[start][1].letter]
+                word += self._board[start][1].letter
+                start = next_loc(start)
+
+            letter_score = LETTER_MAP[letter]
+
+            pt = self._board[start][0]
+            if pt == SpotType.double_word:
+                mult *= 2
+            elif pt == SpotType.triple_word:
+                mult *= 3
+            elif pt == SpotType.double_letter:
+                letter_score *= 2
+            elif pt == SpotType.triple_letter:
+                letter_score *= 3
+
+            letter_locs.append(start)
+            score += letter_score
+            word += letter
+            start = next_loc(start)
+
+        # Could be some extra pieces to make word longer
+        while self._board[start][1] is not None:
+            touched = True
+            score += 0 if self._board[start][1].is_blank else \
+                LETTER_MAP[self._board[start][1].letter]
+            word += self._board[start][1].letter
+            start = next_loc(start)
+
+        if len(word) == 1:
+            return 0, None, touched 
+        if word not in self._raw_dict:
+            raise NotAWordException(word)
+        return score * mult, letter_locs, touched
+
+    # TODO: Not handling blank pieces in hand.
+    def _score_play(self, play):
+        try:
+            is_attached = False
+            # This should return what the blank/s was/were possibly can be, then
+            # pass these values to each successive call to _score_minor to refine
+            # them. Either each has at least one possible value by the end, or
+            # abort
+            major_score, letter_locs, touched = self._score_major(play)
+            is_attached = is_attached or touched
+            # This will be None if the score-able word is only 1 character 
+            # long
+            if letter_locs is None:
+                return 0
+
+            minor_scores = []
+            for loc, letter in zip(letter_locs, play.letters):
+                aux_play = self.Play(loc, not play.vertical, letter)
+                minor_score, _, touched = self._score_major(aux_play)
+                minor_scores.append(minor_score)
+                is_attached = is_attached or touched
+
+            if not is_attached:
+                return 0
+
+            return (major_score + sum(minor_scores) + 
+                    (50 if len(play.letters) == 7 else 0))
+        except (KeyError, NotAWordException) as nwe:
+            return 0
+
+    def best_plays(self, hand, top_k=5):
+        permed_hand = raw_hand_perms(hand)
+
+        play_scores = {}
+        #for location in ((13, 10),): # self._board.open_tiles:
+        for location in self._board.open_tiles:
+            for letters in permed_hand:
+                for vertical in (True, False):
+                    play = self.Play(location, vertical, letters)
+                    play_scores[play] = self._score_play(play)
+
+        sorted_plays = sorted(play_scores.items(), key=operator.itemgetter(1))
+        for p, _ in zip(reversed(sorted_plays), range(top_k)):
+            print('{} with score of {}'.format(*p))
+        return sorted_plays[-1][0]
+
+if __name__ == '__main__':
+    sh = ScrabbleHelper(
+        board=ScrabbleBoard().place_word('waggoning', (5, 7))
+        .place_word('snowcats', (5, 10), vertical=True)
+        .place_word('whizzing', (8, 14), vertical=True, blanks=(3, 4))
+        .place_word('gliders', (7, 7), vertical=True, blanks=(3,))
+        .place_word('dad', (10, 9), vertical=False)
+        .place_word('to', (13, 4), vertical=False)
+        .place_word('pass', (10, 5), vertical=False)
+    )
+    top_choice = sh.best_plays('lare')
+    print(sh._board.consider_play(top_choice))
+    print('-' * repr(sh._board).index('\n'))
+    top_choice = sh.best_plays('uqikoj')
+    print(sh._board.consider_play(top_choice))

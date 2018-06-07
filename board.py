@@ -11,6 +11,15 @@ from collections import defaultdict, namedtuple
 BOARD_SIDE = 15
 Piece = namedtuple('Piece', ['letter', 'is_blank'])
 
+class Colors(enum.Enum):
+    green = '\033[32m'
+    red = '\033[91m'
+    end = '\033[0m'
+
+    @staticmethod
+    def encode(color, message):
+        return color.value + message + Colors.end.value
+
 class SpotType(enum.Enum):
     normal = '    '
     double_letter = '<dl>'
@@ -47,25 +56,27 @@ class ScrabbleBoard(object):
     def __init__(self, pieces={}):
         self._board = self.board_config
         self._pieces = pieces
+        self._hash = hash(frozenset(self._pieces.items()))
 
     @classmethod
     def from_pieces(cls, pieces):
         return cls(pieces)
 
     def _safe_piece(self, loc, letter, is_blank):
-        piece = Piece(letter, is_blank)
+        piece = Piece(letter.lower(), is_blank)
+        assert letter.isalpha(), 'Only words with alphabetic characters'
         assert loc[0] >= 0 and loc[0] <= 14 and loc[1] >= 0 and loc[1] <= 14, \
             'Location out of bounds'
         assert ((loc not in self._pieces) or (piece == self._pieces[loc])), \
             'Conflict with already placed piece'
         return piece
 
+    # Not sure the use case of this
     def place_piece(self, location, letter, is_blank=False):
         new_peices = self._pieces.copy()
         new_peices[location] = self._safe_piece(location, letter, is_blank)
         return self.from_pieces(new_peices)
 
-    # TODO: Needs bounds checking
     def place_word(self, word, start_location, vertical=False, blanks=()):
         new_peices = self._pieces.copy()
         for offset, letter in enumerate(word):
@@ -74,9 +85,31 @@ class ScrabbleBoard(object):
             new_peices[loc] = self._safe_piece(loc, letter, offset in blanks)
         return self.from_pieces(new_peices)
 
+    def consider_play(self, play):
+        new_peices = self._pieces.copy()
+        start = play.location
+        next_loc = lambda l: (l[0], l[1] - 1) if \
+            play.vertical else (l[0] + 1, l[1])
+        for letter in play.letters:
+            while self[start][1] is not None:
+                start = next_loc(start)
+            new_peices[start] = Piece(Colors.encode(Colors.red, letter), False)
+            start = next_loc(start)
+        return self.from_pieces(new_peices)
+
+    @property
+    def open_tiles(self):
+        return filter(lambda x: x not in self._pieces, self._board.keys())
 
     def __getitem__(self, location):
         return self._board[location], self._pieces.get(location)
+
+    def __hash__(self):
+        return self._hash
+
+    # TODO: Needs tests
+    def __eq__(self, other):
+        return hash(self) == hash(other) and self._pieces == other._pieces
 
     def _spot_repr(self, location):
         tile_val, piece = self[location]
@@ -90,17 +123,20 @@ class ScrabbleBoard(object):
 
 
 class TestScrabbleBoard(unittest.TestCase):
+    def expect_assertion(self, f, reverse=False):
+        try:
+            f()
+            self.assertTrue(reverse)
+        except:
+            self.assertTrue(not reverse)
+
     def setUp(self):
         self.sb = ScrabbleBoard()
 
     def test_bounds(self):
         sb = self.sb
-        def bounds(loc, expect_good):
-            try:
-                sb.place_piece(loc, 'a')
-                self.assertTrue(expect_good)
-            except AssertionError:
-                self.assertTrue(not expect_good)
+        bounds = lambda loc, is_good: \
+            self.expect_assertion(lambda: sb.place_piece(loc, 'a'), is_good)
 
         for loc in itertools.product(range(-5, 20), repeat=2):
             bounds(loc, (loc[0] in range(15)) and (loc[1] in range(15)))
@@ -116,26 +152,17 @@ class TestScrabbleBoard(unittest.TestCase):
         # Try overwrite the 'd' in edge with another blank 'd', then a
         # non-blank one
         sb = sb.place_piece((12, 2), 'd', is_blank=True)
-        try:
-            sb = sb.place_piece((12, 2), 'd', is_blank=False)
-            self.assertTrue(False)
-        except AssertionError:
-            self.assertTrue(True)
+        self.expect_assertion(lambda: sb.place_piece((12, 2), 'd',
+                                                     is_blank=False))
         # Run one off the bottom of board
-        try:
-            sb = sb.place_word('eels', (14, 2), vertical=True)
-            self.assertTrue(False)
-        except AssertionError:
-            self.assertTrue(True)
+        self.expect_assertion(lambda: sb.place_word('eels', (14, 2),
+                                                    vertical=True))
         # Hit the bottom right corner going down
         sb = sb.place_word('eel', (14, 2), vertical=True)
         sb = sb.place_word('feel', (14, 3), vertical=True)
-        try:
-            # This should change 'f' at (14, 3) to a p
-            sb = sb.place_word('peel', (14, 3), vertical=True)
-            self.assertTrue(False)
-        except AssertionError:
-            self.assertTrue(True)
+        # This should change 'f' at (14, 3) to a p
+        self.expect_assertion(lambda: sb.place_word('peel', (14, 3),
+                                                    vertical=True))
         self.sb = sb # For test_repr
 
     def test_play_piece(self):
@@ -143,17 +170,15 @@ class TestScrabbleBoard(unittest.TestCase):
         location_letter_iter = zip(
             itertools.product(range(BOARD_SIDE), repeat=2),
             itertools.cycle(map(lambda l: chr(ord('a') + l), range(25))))
+        # Try to add invalid piece
+        self.expect_assertion(lambda: sb.place_piece('$', (5, 5)))
         # Add piece to every spot on board (letter a-y)
         for loc, letter in location_letter_iter:
             sb = sb.place_piece(loc, letter)
         # There should be 15 * 15 pieces on board now
         self.assertEqual(len(sb._pieces), BOARD_SIDE ** 2)
         # Try to add another piece which is not the same as the one played
-        try:
-            sb = sb.place_piece((7, 7), 'z')
-            self.assertTrue(False)
-        except AssertionError:
-            self.assertTrue(True)
+        self.expect_assertion(lambda: sb.place_piece((7, 7), 'z'))
         # Add an 'a' again to (0, 0)
         sb.place_piece((0, 0), 'a')
         # Go over sb with same iterator and check that the letters are really
