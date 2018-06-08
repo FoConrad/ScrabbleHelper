@@ -1,3 +1,4 @@
+import unittest
 import operator
 import random
 import itertools
@@ -132,7 +133,7 @@ class ScrabbleHelper(object):
         except (KeyError, NotAWordException) as nwe:
             return 0
 
-    def best_plays(self, hand, top_k=5):
+    def _all_plays(self, hand):
         permed_hand = raw_hand_perms(hand)
 
         play_scores = {}
@@ -143,23 +144,42 @@ class ScrabbleHelper(object):
                     play = self.Play(location, vertical, letters)
                     play_scores[play] = self._score_play(play)
 
-        sorted_plays = sorted(play_scores.items(), key=operator.itemgetter(1))
+        return sorted(play_scores.items(), key=operator.itemgetter(1))
+
+    def best_plays(self, hand, top_k=5):
+        sorted_plays = self._all_plays(hand)
         for p, _ in zip(reversed(sorted_plays), range(top_k)):
             print('{} with score of {}'.format(*p))
         return sorted_plays[-1][0]
 
+class TestScrabbleHelper(unittest.TestCase):
+    def setUp(self):
+        self.sh = ScrabbleHelper(
+            board=ScrabbleBoard().place_word('waggoning', (5, 7))
+            .place_word('snowcats', (5, 10), vertical=True)
+            .place_word('whizzing', (8, 14), vertical=True, blanks=(3, 4))
+            .place_word('gliders', (7, 7), vertical=True, blanks=(3,))
+            .place_word('dad', (10, 9), vertical=False)
+            .place_word('to', (13, 4), vertical=False)
+            .place_word('pass', (10, 5), vertical=False)
+        )
+
+    def test_lare(self):
+        choices = self.sh._all_plays('lare')
+        print(self.sh._board.consider_play(choices[-1][0]))
+        self.assertEqual(choices[-1][1], 18)
+        self.assertEqual(choices[-2][0].letters, 'ale')
+
+    def test_uqikoj(self):
+        choices = self.sh._all_plays('uqikoj')
+        print(self.sh._board.consider_play(choices[-1][0]))
+        self.assertEqual(choices[-1][1], 34)
+        self.assertEqual(choices[-2][1], 34)
+        self.assertTrue('koji' in (choices[-1][0].letters,
+                                   choices[-2][0].letters))
+        self.assertTrue('quoi' in (choices[-1][0].letters,
+                                   choices[-2][0].letters))
+
+
 if __name__ == '__main__':
-    sh = ScrabbleHelper(
-        board=ScrabbleBoard().place_word('waggoning', (5, 7))
-        .place_word('snowcats', (5, 10), vertical=True)
-        .place_word('whizzing', (8, 14), vertical=True, blanks=(3, 4))
-        .place_word('gliders', (7, 7), vertical=True, blanks=(3,))
-        .place_word('dad', (10, 9), vertical=False)
-        .place_word('to', (13, 4), vertical=False)
-        .place_word('pass', (10, 5), vertical=False)
-    )
-    top_choice = sh.best_plays('lare')
-    print(sh._board.consider_play(top_choice))
-    print('-' * repr(sh._board).index('\n'))
-    top_choice = sh.best_plays('uqikoj')
-    print(sh._board.consider_play(top_choice))
+    unittest.main()
