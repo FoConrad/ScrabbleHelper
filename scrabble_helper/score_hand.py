@@ -1,3 +1,5 @@
+import os
+import sys
 import unittest
 import operator
 import random
@@ -12,11 +14,15 @@ LETTER_MAP = {"a": 1, "c": 3, "b": 3, "e": 1, "d": 2, "g": 2,
                "l": 1, "o": 1, "n": 1, "q": 10, "p": 3, "s": 1,
                "r": 1, "u": 1, "t": 1, "w": 4, "v": 4, "y": 4,
                "x": 8, "z": 10}
+DICT_FILE = (lambda dname:
+             (lambda pd: os.path.join(pd[0], dname))(
+                 next(filter(lambda rdf:
+                             dname in rdf[2], os.walk('.')))))('scrabble.dict')
 
 def raw_word_score(word):
     return sum(map(LETTER_MAP.get, word))
 
-def make_dict(dict_file='scrabble.dict'):
+def make_dict(dict_file=DICT_FILE):
     with open(dict_file, 'r') as fp:
         return defaultdict(int, {word: raw_word_score(word)
                                  for word in map(lambda w:
@@ -37,7 +43,7 @@ class NotAWordException(Exception):
 class ScrabbleHelper(object):
     Play = namedtuple('Play', ('location', 'vertical', 'letters'))
 
-    def __init__(self, scrabble_dict='scrabble.dict', board=None):
+    def __init__(self, scrabble_dict=DICT_FILE, board=None):
         self._raw_dict = make_dict(scrabble_dict)
         self._board = board or ScrabbleBoard()
 
@@ -98,7 +104,7 @@ class ScrabbleHelper(object):
             start = next_loc(start)
 
         if len(word) == 1:
-            return 0, None, touched 
+            return 0, None, touched
         if word not in self._raw_dict:
             raise NotAWordException(word)
         return score * mult, letter_locs, touched
@@ -113,7 +119,7 @@ class ScrabbleHelper(object):
             # abort
             major_score, letter_locs, touched = self._score_major(play)
             is_attached = is_attached or touched
-            # This will be None if the score-able word is only 1 character 
+            # This will be None if the score-able word is only 1 character
             # long
             if letter_locs is None:
                 return 0
@@ -128,7 +134,7 @@ class ScrabbleHelper(object):
             if not is_attached:
                 return 0
 
-            return (major_score + sum(minor_scores) + 
+            return (major_score + sum(minor_scores) +
                     (50 if len(play.letters) == 7 else 0))
         except (KeyError, NotAWordException) as nwe:
             return 0
@@ -153,26 +159,23 @@ class ScrabbleHelper(object):
         return sorted_plays[-1][0]
 
 class TestScrabbleHelper(unittest.TestCase):
-    def setUp(self):
-        self.sh = ScrabbleHelper(
-            board=ScrabbleBoard().place_word('waggoning', (5, 7))
-            .place_word('snowcats', (5, 10), vertical=True)
-            .place_word('whizzing', (8, 14), vertical=True, blanks=(3, 4))
-            .place_word('gliders', (7, 7), vertical=True, blanks=(3,))
-            .place_word('dad', (10, 9), vertical=False)
-            .place_word('to', (13, 4), vertical=False)
-            .place_word('pass', (10, 5), vertical=False)
-        )
+    sh = ScrabbleHelper(
+        board=ScrabbleBoard().place_word('waggoning', (5, 7))
+        .place_word('snowcats', (5, 10), vertical=True)
+        .place_word('whizzing', (8, 14), vertical=True, blanks=(3, 4))
+        .place_word('gliders', (7, 7), vertical=True, blanks=(3,))
+        .place_word('dad', (10, 9), vertical=False)
+        .place_word('to', (13, 4), vertical=False)
+        .place_word('pass', (10, 5), vertical=False)
+    )
 
     def test_lare(self):
         choices = self.sh._all_plays('lare')
-        print(self.sh._board.consider_play(choices[-1][0]))
         self.assertEqual(choices[-1][1], 18)
         self.assertEqual(choices[-2][0].letters, 'ale')
 
     def test_uqikoj(self):
         choices = self.sh._all_plays('uqikoj')
-        print(self.sh._board.consider_play(choices[-1][0]))
         self.assertEqual(choices[-1][1], 34)
         self.assertEqual(choices[-2][1], 34)
         self.assertTrue('koji' in (choices[-1][0].letters,
@@ -182,4 +185,7 @@ class TestScrabbleHelper(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    if len(sys.argv) > 1:
+        print(TestScrabbleHelper.sh._board)
+    else:
+        unittest.main()
