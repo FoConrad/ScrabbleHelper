@@ -15,7 +15,7 @@ const requestHandler = (request, response) => {
     });
     pythonProcess.on('exit', function() {
         response.write('\n\n')
-        //response.write('Message from TJ here')
+        response.write('Message from Conrad here')
         response.end('An example scrabble board, above')
     })
 }
